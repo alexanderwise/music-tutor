@@ -1,0 +1,75 @@
+[project]
+name = "music-tutor"
+version = "0.1.0"
+description = "Audio processing pipeline for music practice - separates stems, detects beats/notes, aligns lyrics"
+requires-python = ">=3.11,<3.14"
+readme = "README.md"
+
+dependencies = [
+    # CLI and config
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+
+    # Pin compatible versions for Python 3.11+
+    "numba>=0.60.0",
+    "llvmlite>=0.43.0",
+
+    # Audio I/O
+    "librosa>=0.10.0",
+    "soundfile>=0.12.0",
+    "mutagen>=1.47.0",
+
+    # Stem separation
+    "audio-separator>=0.25.0",
+    "onnxruntime>=1.16.0",
+
+    # Pitch detection
+    "basic-pitch>=0.3.0",
+
+    # Lyrics alignment
+    "stable-ts>=2.15.0",
+
+    # Time stretching
+    "pyrubberband>=0.3.0",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "audio-separator[gpu]",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+music-tutor = "music_tutor.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/music_tutor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
