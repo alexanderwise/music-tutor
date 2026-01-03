@@ -22,6 +22,22 @@ export interface Note {
   pitchBend?: { time: number; cents: number }[];
 }
 
+/** Drum strike event */
+export interface DrumStrike {
+  time: number;
+  velocity: number;
+}
+
+/** Drum strikes organized by component */
+export interface DrumStrikes {
+  kick?: DrumStrike[];
+  snare?: DrumStrike[];
+  hh?: DrumStrike[];
+  ride?: DrumStrike[];
+  crash?: DrumStrike[];
+  toms?: DrumStrike[];
+}
+
 /** Lyric word with timing */
 export interface LyricWord {
   text: string;
@@ -57,6 +73,7 @@ export interface SongAnalysis {
   beats: BeatEvent[];
   notes?: Record<string, Note[]>;
   lyrics?: LyricsData | null;
+  drumStrikes?: DrumStrikes;
   sourceFile: string;
   processingDate: string;
   converterVersion: string;

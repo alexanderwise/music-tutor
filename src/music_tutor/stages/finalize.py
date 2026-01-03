@@ -224,6 +224,7 @@ class FinalizeStage(PipelineStage):
             beats=context.beats,
             notes=notes,
             lyrics=context.lyrics,
+            drum_strikes=context.drum_strikes,
         )
 
         # Add warnings for missing data

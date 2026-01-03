@@ -19,7 +19,7 @@ interface AudioEngineState {
   duration: number;
   speed: PlaybackSpeed;
   stems: Record<string, StemState>;
-  soloedStem: string | null;
+  soloedStems: Set<string>;  // Multiple stems can be soloed (Pro Tools style)
   loopStart: number | null;
   loopEnd: number | null;
 }
@@ -39,7 +39,7 @@ export function useAudioEngine(analysis: SongAnalysis | null, songDir: string) {
     duration: 0,
     speed: "1.0x",
     stems: {},
-    soloedStem: null,
+    soloedStems: new Set<string>(),
     loopStart: null,
     loopEnd: null,
   });
@@ -91,9 +91,24 @@ export function useAudioEngine(analysis: SongAnalysis | null, songDir: string) {
 
     initAudio();
 
+    // Cleanup on unmount - stop all audio
     return () => {
       if (rafIdRef.current) {
         cancelAnimationFrame(rafIdRef.current);
+      }
+      // Stop all playing sources
+      Object.values(sourceNodesRef.current).forEach((source) => {
+        try {
+          source.stop();
+        } catch {
+          // Ignore if already stopped
+        }
+      });
+      sourceNodesRef.current = {};
+      // Close the audio context
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
       }
     };
   }, [analysis, songDir]);
@@ -277,9 +292,9 @@ export function useAudioEngine(analysis: SongAnalysis | null, songDir: string) {
     Object.entries(state.stems).forEach(([name, stem]) => {
       if (!stem.buffer || !stem.gainNode) return;
 
-      // Ensure gain is set correctly
-      const isSoloActive = state.soloedStem !== null;
-      const shouldPlay = !stem.isMuted && (!isSoloActive || state.soloedStem === name);
+      // Ensure gain is set correctly (Pro Tools style: solo mutes non-soloed stems)
+      const isSoloActive = state.soloedStems.size > 0;
+      const shouldPlay = !stem.isMuted && (!isSoloActive || state.soloedStems.has(name));
       stem.gainNode.gain.value = shouldPlay ? stem.volume / 100 : 0;
 
       const source = ctx.createBufferSource();
@@ -294,7 +309,7 @@ export function useAudioEngine(analysis: SongAnalysis | null, songDir: string) {
     isPlayingRef.current = true;
 
     setState((prev) => ({ ...prev, isPlaying: true }));
-  }, [state.stems, state.soloedStem, stopAllSources]);
+  }, [state.stems, state.soloedStems, stopAllSources]);
 
   // Pause playback
   const pause = useCallback(() => {
@@ -397,8 +412,8 @@ export function useAudioEngine(analysis: SongAnalysis | null, songDir: string) {
       if (!stem || !stem.gainNode) return prev;
 
       // Apply volume (considering mute and solo states)
-      const isSoloActive = prev.soloedStem !== null;
-      const shouldPlay = !stem.isMuted && (!isSoloActive || prev.soloedStem === stemName);
+      const isSoloActive = prev.soloedStems.size > 0;
+      const shouldPlay = !stem.isMuted && (!isSoloActive || prev.soloedStems.has(stemName));
       stem.gainNode.gain.value = shouldPlay ? volume / 100 : 0;
 
       return {
@@ -418,8 +433,8 @@ export function useAudioEngine(analysis: SongAnalysis | null, songDir: string) {
       if (!stem || !stem.gainNode) return prev;
 
       const isMuted = !stem.isMuted;
-      const isSoloActive = prev.soloedStem !== null;
-      const shouldPlay = !isMuted && (!isSoloActive || prev.soloedStem === stemName);
+      const isSoloActive = prev.soloedStems.size > 0;
+      const shouldPlay = !isMuted && (!isSoloActive || prev.soloedStems.has(stemName));
       stem.gainNode.gain.value = shouldPlay ? stem.volume / 100 : 0;
 
       return {
@@ -432,29 +447,35 @@ export function useAudioEngine(analysis: SongAnalysis | null, songDir: string) {
     });
   }, []);
 
-  // Toggle stem solo
+  // Toggle stem solo (Pro Tools style: multiple stems can be soloed)
   const toggleSolo = useCallback((stemName: string) => {
     setState((prev) => {
-      const newSoloedStem = prev.soloedStem === stemName ? null : stemName;
+      const newSoloedStems = new Set(prev.soloedStems);
+      if (newSoloedStems.has(stemName)) {
+        newSoloedStems.delete(stemName);
+      } else {
+        newSoloedStems.add(stemName);
+      }
 
       // Update all stem volumes based on solo state
       const newStems = { ...prev.stems };
       for (const [name, stem] of Object.entries(newStems)) {
         if (!stem.gainNode) continue;
 
-        if (newSoloedStem === null) {
+        if (newSoloedStems.size === 0) {
           // No solo - respect mute state
           stem.gainNode.gain.value = stem.isMuted ? 0 : stem.volume / 100;
         } else {
-          // Solo active - only play soloed stem
-          stem.gainNode.gain.value = name === newSoloedStem ? stem.volume / 100 : 0;
+          // Solo active - only play soloed stems (mute others)
+          const isSoloed = newSoloedStems.has(name);
+          stem.gainNode.gain.value = isSoloed && !stem.isMuted ? stem.volume / 100 : 0;
         }
       }
 
       return {
         ...prev,
         stems: newStems,
-        soloedStem: newSoloedStem,
+        soloedStems: newSoloedStems,
       };
     });
   }, []);

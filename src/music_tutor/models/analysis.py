@@ -37,6 +37,14 @@ class BeatEvent:
 
 
 @dataclass
+class DrumStrike:
+    """A detected drum hit from an isolated drum stem."""
+
+    time: float  # seconds (at 1.0x speed)
+    velocity: float  # 0.0-1.0 (relative amplitude)
+
+
+@dataclass
 class LyricWord:
     """A single word with timing."""
 
@@ -105,3 +113,6 @@ class SongAnalysis:
     beats: list[BeatEvent] = field(default_factory=list)
     notes: dict[str, list[Note]] = field(default_factory=dict)  # keyed by stem name
     lyrics: LyricsData | None = None
+
+    # Drum strike analysis (keyed by drum stem: kick, snare, hh, etc.)
+    drum_strikes: dict[str, list[DrumStrike]] = field(default_factory=dict)

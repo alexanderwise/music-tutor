@@ -23,6 +23,61 @@ pub struct BeatEvent {
     pub beat_in_measure: Option<i32>,
 }
 
+/// Note from pitch detection
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Note {
+    pub start: f64,
+    pub end: f64,
+    pub pitch: i32,
+    pub velocity: f64,
+    pub pitch_bend: Option<Vec<PitchBendPoint>>,
+}
+
+/// Pitch bend point
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PitchBendPoint {
+    pub time: f64,
+    pub cents: f64,
+}
+
+/// Drum strike event
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrumStrike {
+    pub time: f64,
+    pub velocity: f64,
+}
+
+/// Lyric word with timing
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricWord {
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+    pub confidence: f64,
+}
+
+/// Lyric line with words
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricLine {
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+    pub words: Vec<LyricWord>,
+}
+
+/// Lyrics data
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsData {
+    pub source: String,
+    pub lines: Vec<LyricLine>,
+}
+
 /// Song analysis data
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +91,12 @@ pub struct SongAnalysis {
     pub time_signature: Option<(i32, i32)>,
     pub stems: std::collections::HashMap<String, StemInfo>,
     pub beats: Vec<BeatEvent>,
+    #[serde(default)]
+    pub notes: Option<std::collections::HashMap<String, Vec<Note>>>,
+    #[serde(default)]
+    pub lyrics: Option<LyricsData>,
+    #[serde(default)]
+    pub drum_strikes: Option<std::collections::HashMap<String, Vec<DrumStrike>>>,
     pub source_file: String,
     pub processing_date: String,
     pub converter_version: String,
@@ -144,6 +205,68 @@ fn process_song(audio_file: &str, output_dir: &str, separate_drums: bool) -> Res
             stdout.trim(),
             stderr.trim()
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_drum_strikes_deserialization() {
+        let json = r#"{
+            "title": "Test",
+            "artist": null,
+            "album": null,
+            "originalDuration": 100.0,
+            "sampleRate": 44100,
+            "tempoBpm": 120.0,
+            "timeSignature": [4, 4],
+            "stems": {},
+            "beats": [],
+            "notes": {},
+            "lyrics": null,
+            "drumStrikes": {
+                "kick": [{"time": 1.0, "velocity": 0.5}],
+                "snare": [{"time": 2.0, "velocity": 0.8}]
+            },
+            "sourceFile": "test.mp3",
+            "processingDate": "2025-01-01",
+            "converterVersion": "0.1.0"
+        }"#;
+
+        let result: SongAnalysis = serde_json::from_str(json).expect("Should parse");
+        assert!(result.drum_strikes.is_some(), "drum_strikes should be Some");
+        let ds = result.drum_strikes.unwrap();
+        assert!(ds.contains_key("kick"), "Should have kick");
+        assert!(ds.contains_key("snare"), "Should have snare");
+        println!("Keys: {:?}", ds.keys().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_real_file_deserialization() {
+        // Test with an actual analysis file
+        let test_path = std::path::Path::new("../../output/murdocks_revenge_of_course_you_die/analysis.json");
+        if test_path.exists() {
+            let content = std::fs::read_to_string(test_path).expect("Should read file");
+            let result: SongAnalysis = serde_json::from_str(&content).expect("Should parse real file");
+
+            println!("Title: {:?}", result.title);
+            println!("drum_strikes is_some: {}", result.drum_strikes.is_some());
+            if let Some(ds) = &result.drum_strikes {
+                println!("drum_strikes keys: {:?}", ds.keys().collect::<Vec<_>>());
+                for (key, strikes) in ds.iter() {
+                    println!("  {}: {} strikes", key, strikes.len());
+                }
+            }
+            println!("notes is_some: {}", result.notes.is_some());
+            if let Some(notes) = &result.notes {
+                println!("notes keys: {:?}", notes.keys().collect::<Vec<_>>());
+            }
+            println!("lyrics is_some: {}", result.lyrics.is_some());
+        } else {
+            println!("Test file not found at {:?}, skipping", test_path);
+        }
     }
 }
 

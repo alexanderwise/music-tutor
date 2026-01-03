@@ -1,9 +1,31 @@
 """Time stretching stage - creates speed variants using pyrubberband."""
 
+import os
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
+
+
+@contextmanager
+def suppress_stderr():
+    """Temporarily suppress stderr output.
+
+    Used to hide harmless ffmpeg "Broken pipe" errors from pyrubberband.
+    These occur when pyrubberband closes the pipe before ffmpeg finishes
+    its cleanup, but all audio data is already written.
+    """
+    stderr_fd = sys.stderr.fileno()
+    old_stderr = os.dup(stderr_fd)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, stderr_fd)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, stderr_fd)
+        os.close(old_stderr)
+        os.close(devnull)
 
 from music_tutor.config import Settings
 from music_tutor.models.pipeline import ProcessingContext, StageResult
@@ -140,7 +162,9 @@ class TimeStretchStage(PipelineStage):
                 # Note: rate in pyrubberband is playback rate
                 # rate > 1 = faster, rate < 1 = slower
                 # To get 0.5x playback speed, we need rate=0.5
-                y_stretched = pyrubberband.time_stretch(y, sr, speed)
+                # Suppress stderr to hide harmless ffmpeg pipe errors
+                with suppress_stderr():
+                    y_stretched = pyrubberband.time_stretch(y, sr, speed)
                 sf.write(output_path, y_stretched, sr)
 
             results[speed_key] = output_path

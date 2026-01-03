@@ -23,7 +23,7 @@ def main() -> None:
 
 
 @main.command()
-@click.argument("audio_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("audio_file", type=click.Path(path_type=Path), required=False)
 @click.option(
     "-o",
     "--output",
@@ -50,13 +50,19 @@ def main() -> None:
     default=None,
     help="Separate drums into kick, snare, toms, hi-hat, ride, crash",
 )
+@click.option(
+    "--reanalyze",
+    is_flag=True,
+    help="Re-run analysis stages only (skip stem separation and time stretching)",
+)
 def convert(
-    audio_file: Path,
+    audio_file: Path | None,
     output: Path | None,
     model: str | None,
     gpu: bool | None,
     keep_temp: bool,
     drum_sep: bool | None,
+    reanalyze: bool,
 ) -> None:
     """Convert an audio file for practice.
 
@@ -68,8 +74,26 @@ def convert(
     3. Detect beats, notes, and align lyrics
     4. Generate time-stretched versions
     5. Output analysis.json with all metadata
+
+    Use --reanalyze to re-run only the analysis stages on existing stems.
     """
-    from music_tutor.pipeline import Pipeline, create_default_pipeline
+    from music_tutor.pipeline import (
+        create_analysis_pipeline,
+        create_default_pipeline,
+    )
+
+    # Validate arguments based on mode
+    if reanalyze:
+        if output is None:
+            console.print("[red]Error: --output is required when using --reanalyze[/red]")
+            raise SystemExit(1)
+    else:
+        if audio_file is None:
+            console.print("[red]Error: AUDIO_FILE is required[/red]")
+            raise SystemExit(1)
+        if not audio_file.exists():
+            console.print(f"[red]Error: File not found: {audio_file}[/red]")
+            raise SystemExit(1)
 
     settings = get_settings()
 
@@ -85,17 +109,34 @@ def convert(
 
     # Determine output directory
     if output is None:
+        assert audio_file is not None  # Already validated above
         song_name = audio_file.stem
         output = settings.output_dir / song_name
 
     console.print(f"[bold blue]Music Tutor[/bold blue] v{__version__}")
-    console.print(f"Processing: [green]{audio_file}[/green]")
-    console.print(f"Output: [green]{output}[/green]")
-    console.print()
 
-    # Create and run pipeline
-    pipeline = create_default_pipeline(settings)
-    result = pipeline.run(audio_file, output)
+    if reanalyze:
+        # Reanalyze mode: use existing stems, re-run analysis stages only
+        analysis_path = output / "analysis.json"
+        if not analysis_path.exists():
+            console.print(f"[red]Error: No existing analysis.json found at {output}[/red]")
+            console.print("Run without --reanalyze first to create stems.")
+            raise SystemExit(1)
+
+        console.print(f"[yellow]Reanalyzing:[/yellow] [green]{output}[/green]")
+        console.print("(Skipping stem separation and time stretching)")
+        console.print()
+
+        pipeline = create_analysis_pipeline(settings)
+        result = pipeline.reanalyze(output)
+    else:
+        console.print(f"Processing: [green]{audio_file}[/green]")
+        console.print(f"Output: [green]{output}[/green]")
+        console.print()
+
+        # Create and run full pipeline
+        pipeline = create_default_pipeline(settings)
+        result = pipeline.run(audio_file, output)
 
     # Display results
     if result.success:

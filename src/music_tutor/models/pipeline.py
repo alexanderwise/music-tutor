@@ -6,7 +6,7 @@ These models track state as audio files move through the processing pipeline.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from music_tutor.models.analysis import BeatEvent, LyricsData, Note
+from music_tutor.models.analysis import BeatEvent, DrumStrike, LyricsData, Note
 
 
 @dataclass
@@ -45,6 +45,9 @@ class ProcessingContext:
 
     # Note data (Stage 3b) - keyed by stem name
     notes: dict[str, list[Note]] = field(default_factory=dict)
+
+    # Drum strike data (Stage 3d) - keyed by drum stem name (kick, snare, hh, etc.)
+    drum_strikes: dict[str, list[DrumStrike]] = field(default_factory=dict)
 
     # Lyrics data (Stage 3c)
     lyrics: LyricsData | None = None

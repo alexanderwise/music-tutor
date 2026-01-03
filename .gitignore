@@ -1,2 +1,4 @@
 samples/*
 figma/*
+output/*
+client/src-tauri/target/debug/*

@@ -26,7 +26,7 @@ class BeatDetectionStage(PipelineStage):
     """
 
     # Supported time signatures (beats per bar)
-    SUPPORTED_TIME_SIGNATURES = [4, 3]
+    SUPPORTED_TIME_SIGNATURES = [4, 3, 5]
 
     @property
     def name(self) -> str:
@@ -110,16 +110,44 @@ class BeatDetectionStage(PipelineStage):
         # Apply PyTorch compatibility patch for older model checkpoints
         self._apply_torch_patch()
 
-        # Create processors
+        # Get neural network activations
         proc = madmom.features.downbeats.RNNDownBeatProcessor()
-        dbn = madmom.features.downbeats.DBNDownBeatTrackingProcessor(
-            beats_per_bar=self.SUPPORTED_TIME_SIGNATURES,
-            fps=100,
-        )
-
-        # Process audio
         activations = proc(str(audio_path))
-        downbeats = dbn(activations)
+
+        # Run DBN separately for each time signature and compare
+        # This avoids madmom's implicit 4/4 bias when given multiple options
+        results = {}
+        scores = {}
+
+        for beats_per_bar in self.SUPPORTED_TIME_SIGNATURES:
+            dbn = madmom.features.downbeats.DBNDownBeatTrackingProcessor(
+                beats_per_bar=[beats_per_bar],
+                fps=100,
+            )
+            result = dbn(activations)
+            results[beats_per_bar] = result
+            scores[beats_per_bar] = self._calculate_consistency_score(result, beats_per_bar)
+
+        # Choose best time signature
+        # Since 4/4 is far more common, require other signatures to be noticeably
+        # better to overcome the prior. For actual non-4/4 songs, the difference
+        # is typically much larger (50%+), so these thresholds won't affect real detection.
+        best_beats = 4  # default
+
+        if 4 in scores:
+            base_score = scores[4]
+            # 3/4 must be >2% better than 4/4
+            if 3 in scores and scores[3] > base_score * 1.02:
+                best_beats = 3
+                base_score = scores[3]
+            # 5/4 must be >5% better (it's very rare)
+            if 5 in scores and scores[5] > base_score * 1.05:
+                best_beats = 5
+        else:
+            best_beats = max(scores, key=scores.get)
+
+        downbeats = results[best_beats]
+        best_time_sig = (best_beats, 4)
 
         # Convert to BeatEvent list
         beats = self._convert_to_beat_events(downbeats)
@@ -127,10 +155,66 @@ class BeatDetectionStage(PipelineStage):
         # Calculate tempo from beat intervals
         tempo = self._calculate_tempo(downbeats)
 
-        # Detect time signature from beat pattern
-        time_sig = self._detect_time_signature(downbeats)
+        return beats, tempo, best_time_sig
 
-        return beats, tempo, time_sig
+    def _calculate_consistency_score(
+        self, downbeats: np.ndarray, beats_per_bar: int
+    ) -> float:
+        """Calculate a consistency score for beat detection results.
+
+        Uses both beat interval consistency AND downbeat interval consistency.
+        Downbeat consistency is more important because it indicates proper
+        measure boundaries.
+
+        Args:
+            downbeats: Array of shape (N, 2) with [time, beat_position]
+            beats_per_bar: The number of beats per bar for this result
+
+        Returns:
+            Consistency score (higher = more consistent)
+        """
+        if len(downbeats) < 8:
+            return 0.0
+
+        beat_times = downbeats[:, 0]
+        beat_positions = downbeats[:, 1]
+
+        # Beat interval consistency
+        beat_intervals = np.diff(beat_times)
+        if len(beat_intervals) == 0:
+            return 0.0
+
+        beat_mean = np.mean(beat_intervals)
+        if beat_mean == 0:
+            return 0.0
+
+        beat_cv = np.std(beat_intervals) / beat_mean
+
+        # Downbeat interval consistency (more important)
+        downbeat_mask = beat_positions == 1
+        downbeat_times = beat_times[downbeat_mask]
+
+        if len(downbeat_times) < 3:
+            # Not enough downbeats, rely on beat consistency only
+            return 1.0 / (1.0 + beat_cv * 10.0)
+
+        downbeat_intervals = np.diff(downbeat_times)
+        downbeat_mean = np.mean(downbeat_intervals)
+        downbeat_cv = np.std(downbeat_intervals) / downbeat_mean
+
+        # Expected downbeat interval based on beats_per_bar and beat interval
+        expected_downbeat_interval = beat_mean * beats_per_bar
+        downbeat_error = abs(downbeat_mean - expected_downbeat_interval) / expected_downbeat_interval
+
+        # Combined score:
+        # - Beat consistency (weight: 0.3)
+        # - Downbeat consistency (weight: 0.4)
+        # - Downbeat interval matches expected (weight: 0.3)
+        beat_score = 1.0 / (1.0 + beat_cv * 10.0)
+        downbeat_score = 1.0 / (1.0 + downbeat_cv * 10.0)
+        match_score = 1.0 / (1.0 + downbeat_error * 5.0)
+
+        return 0.3 * beat_score + 0.4 * downbeat_score + 0.3 * match_score
 
     def _apply_torch_patch(self) -> None:
         """Apply PyTorch compatibility patch for older madmom model checkpoints.
@@ -199,33 +283,3 @@ class BeatDetectionStage(PipelineStage):
         tempo = 60.0 / avg_interval
 
         return float(tempo)
-
-    def _detect_time_signature(self, downbeats: np.ndarray) -> tuple[int, int]:
-        """Detect time signature from downbeat pattern.
-
-        Args:
-            downbeats: Array of shape (N, 2) with [time, beat_position]
-
-        Returns:
-            Time signature as (numerator, denominator), e.g., (4, 4)
-        """
-        if len(downbeats) < 4:
-            return (4, 4)  # Default fallback
-
-        beat_positions = downbeats[:, 1]
-        downbeat_indices = np.where(beat_positions == 1)[0]
-
-        if len(downbeat_indices) < 2:
-            return (4, 4)
-
-        # Calculate beats between downbeats
-        beats_per_measure = np.diff(downbeat_indices)
-
-        # Use median to be robust to errors
-        beats = int(np.median(beats_per_measure))
-
-        # Clamp to supported values
-        if beats not in self.SUPPORTED_TIME_SIGNATURES:
-            beats = 4
-
-        return (beats, 4)  # Always quarter note = 1 beat
