@@ -1,4 +1,18 @@
+# Build outputs
 samples/*
 figma/*
 output/*
-client/src-tauri/target/debug/*
+
+# Node.js
+node_modules/
+dist/
+
+# Rust/Cargo
+target/
+
+# OS files
+.DS_Store
+
+# Environment
+.env
+.env.local
